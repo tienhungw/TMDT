@@ -18,6 +18,7 @@ target/
 *.iws
 *.iml
 *.ipr
+out/
 
 ### NetBeans ###
 /nbproject/private/
@@ -31,3 +32,26 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### macOS ###
+.DS_Store
+
+### Logs ###
+*.log
+logs/
+
+### Editor swap / backup ###
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+
+### Local overrides (don't commit secrets here) ###
+application-local.properties
+application-local.yml
+.env
+.env.local
+
+### Claude Code project-local settings ###
+.claude/
