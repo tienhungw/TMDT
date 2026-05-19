@@ -7,11 +7,13 @@ import com.TH.demo.Repositories.OrderdetailRepository;
 import com.TH.demo.Repositories.UserRepository;
 import com.TH.demo.Services.CartServices;
 import com.TH.demo.Services.OrderServices;
+import com.TH.demo.Services.PaymentService;
 import com.TH.demo.Services.ProductServices;
 import org.aspectj.weaver.ast.Or;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -41,6 +43,16 @@ public class OrderController {
     CartItemRepository cartItemRepository;
     @Autowired
     OrderRepository orderRepository;
+    @Autowired
+    PaymentService paymentService;
+
+    @Value("${bank.code}")
+    private String bankCode;
+    @Value("${bank.account}")
+    private String bankAccount;
+    @Value("${bank.accountName}")
+    private String bankAccountName;
+
     private static final Logger log = LoggerFactory.getLogger(ProductController.class);
     @GetMapping("/user/order")
     public String TrangDatHang(Model model, Principal principal){
@@ -117,7 +129,6 @@ public class OrderController {
     public String checkout(Principal principal, RedirectAttributes redirectAttributes) {
         String username = principal.getName();
         Users user = userRepository.findByUsername(username).orElseThrow();
-        // Logging user request
         log.info("[USER [{}] tiến hành checking]", username);
 
         List<CartItem> cartItems = cartServices.getCartItemsByUser(user);
@@ -142,37 +153,56 @@ public class OrderController {
         Order order = new Order();
         order.setUser(user);
         order.setTotalPrice(total);
-        order.setStatus(OrderStatus.PROCESSING);
+        order.setStatus(OrderStatus.PENDING);
         order.setOrderDate(LocalDate.now());
 
         orderServices.saveOrder(order);
-        log.info("[Đơn hàng đã được tạo cho USER [{}] với ID [{}] và tổng giá trị là [{}]]", username, order.getId(), total);
+        log.info("[Đơn hàng PENDING đã được tạo cho USER [{}] với ID [{}] và tổng giá trị là [{}], chờ thanh toán]",
+                username, order.getId(), total);
 
-        log.info("[Các sản phẩm trong đơn hàng '{}':]", order.getId());
-        for(CartItem item : cartItems){
-            Product product = item.getProduct();
-            int newQuantity = product.getQuantity() - item.getQuantity();
-            if (newQuantity < 0) {
-                log.error("[Không đủ hàng cho sản phẩm '{}']", product.getName());
-                throw new IllegalArgumentException("Sản phẩm " + product.getName() + " không đủ hàng.");
-            }
-            product.setQuantity(newQuantity);
-            productServices.saveProduct(product);
-
-            OrderDetail orderDetail = new OrderDetail();
-            orderDetail.setOrder(order);
-            orderDetail.setProduct(item.getProduct());
-            orderDetail.setQuantity(item.getQuantity());
-            orderDetail.setPrice(item.getProduct().getPrice());
-            orderdetailRepository.save(orderDetail);
-
-            log.info("Đơn hàng [{}], tên sp: [{}], số lượng: [{}], Giá: [{}]",order.getId(), product.getName(), item.getQuantity(), item.getProduct().getPrice());
-        }
-        cartItemRepository.deleteAll();
-        log.info("[Đã xóa các sản phẩm của [{}] trong giỏ hàng sau khi đặt thành công]", username);
-        return "redirect:/user/order/success";
+        return "redirect:/user/order/" + order.getId() + "/pay";
     }
 
+    @GetMapping("/user/order/{id}/pay")
+    public String payPage(@PathVariable("id") Long orderId, Model model, Principal principal) {
+        Optional<Order> opt = orderRepository.findById(orderId);
+        if (opt.isEmpty()) {
+            return "redirect:/user/cart";
+        }
+        Order order = opt.get();
+        if (!order.getUser().getUsername().equals(principal.getName())) {
+            log.warn("[USER [{}] cố truy cập trang thanh toán của đơn [{}] không phải của họ]",
+                    principal.getName(), orderId);
+            return "redirect:/user/cart";
+        }
+        if (order.getStatus() != OrderStatus.PENDING) {
+            return "redirect:/user/order/success";
+        }
+
+        long amount = Math.round(order.getTotalPrice());
+        model.addAttribute("order", order);
+        model.addAttribute("bankCode", bankCode);
+        model.addAttribute("bankAccount", bankAccount);
+        model.addAttribute("bankAccountName", bankAccountName);
+        model.addAttribute("amount", amount);
+        model.addAttribute("memo", "DH" + order.getId());
+        log.info("[USER [{}] truy cập trang thanh toán QR cho đơn [{}], số tiền [{}]]",
+                principal.getName(), orderId, amount);
+
+        return "thanhtoan";
+    }
+
+    @PostMapping("/user/order/{id}/confirm-paid")
+    public String confirmPaid(@PathVariable("id") Long orderId, Principal principal,
+                              RedirectAttributes redirectAttributes) {
+        boolean ok = paymentService.confirmPayment(orderId, principal.getName());
+        if (ok) {
+            return "redirect:/user/order/success";
+        }
+        redirectAttributes.addFlashAttribute("error",
+                "Không thể xác nhận thanh toán. Vui lòng thử lại hoặc liên hệ admin.");
+        return "redirect:/user/order/" + orderId + "/pay";
+    }
 
     @GetMapping("/user/order/success")
     public String success(){
